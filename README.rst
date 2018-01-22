@@ -12,6 +12,15 @@ interface to the PyEphem module that allows for ephemerides
 calculations on your machine.
 
 
+Edits in this fork (by MJT Mace)
+--------------------------------
+
+This particular fork enables Cartesian state vector queries through `get_vectors`.
+Subsequent to writing this `get_vectors` method, I was informed by the original author
+(Michael Mommert) that it is possible to obtain state vectors using the `solar system` 
+feature of `astroquery`: https://github.com/mommermi/astroquery/tree/solarsystem/astroquery/solarsystem 
+
+
 Installation
 ------------
 

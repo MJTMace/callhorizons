@@ -7,16 +7,20 @@ website. Ephemerides can be obtained through get_ephemerides,
 orbital elements through get_elements. Function
 export2pyephem provides an interface to the PyEphem module.
 
-michael.mommert (at) nau.edu, latest version: v1.0.5, 2017-05-05.
+michael.mommert (at) nau.edu, latest version: v1.01.11.
 This code is inspired by code created by Alex Hagen.
 
-* v1.0.5: 15-epoch limit for set_discreteepochs removed
-* v1.0.4: improved asteroid and comet name parsing
-* v1.0.3: ObsEclLon and ObsEclLat added to get_ephemerides
-* v1.0.2: Python 3.5 compatibility implemented
-* v1.0.1: get_ephemerides fixed
-* v1.0:   bugfixes completed, planets/satellites accessible, too
-* v0.9:   first release
+Added functionality by Mia Mace (2018-01-22): get_vectors method 
+provides access to Cartesian state vectors.
+
+* v1.0.11: git cloned from https://github.com/mommermi/callhorizons Jan 2018
+* v1.0.5:  15-epoch limit for set_discreteepochs removed
+* v1.0.4:  improved asteroid and comet name parsing
+* v1.0.3:  ObsEclLon and ObsEclLat added to get_ephemerides
+* v1.0.2:  Python 3.5 compatibility implemented
+* v1.0.1:  get_ephemerides fixed
+* v1.0:    bugfixes completed, planets/satellites accessible, too
+* v0.9:    first release
 
 
 """
@@ -453,7 +457,7 @@ class query():
 
         # check if data exist
         if self.data is None or len(self.data) == 0:
-            print ('CALLHORIZONS ERROR: run get_ephemerides or get_elements',
+            print ('CALLHORIZONS ERROR: run get_ephemerides or get_elements or get_vectors',
                    'first')
             return None
 
@@ -1254,6 +1258,277 @@ class query():
                                       in range(len(fieldnames))])
 
         return len(self)
+
+
+
+
+    def get_vectors(self, center='500@10', asteroid=False, comet=False):
+        """Call JPL HORIZONS website to obtain Cartesian state vectors based on the
+        provided targetname, epochs, and center code. For valid center
+        codes, please refer to http://ssd.jpl.nasa.gov/horizons.cgi
+        and https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/naif_ids.html
+        
+        :param center:  str; 
+           center body (default: 500@10 = Sun)
+        :result: int; number of epochs queried
+        :example: >>> saturn = callhorizons.query('699')
+                  >>> saturn.set_epochrange('2018-01-19 00:00', '2018-01-29 00:00', '1h')
+                  >>> print (saturn.get_vectors(), 'epochs queried')
+
+        The queried properties and their definitions are:
+           +------------------+---------------------------------------------------------------+
+           | Property         | Definition                                                    |
+           +==================+===============================================================+
+           | targetname       | official number, name, designation [string]                   |
+           +------------------+---------------------------------------------------------------+
+           | H                | absolute magnitude in V band (float, mag)                     |
+           +------------------+---------------------------------------------------------------+
+           | G                | photometric slope parameter (float)                           |
+           +------------------+---------------------------------------------------------------+
+           | datetime         | epoch date and time (str, AD YYYY-MM-DD THH:MM:SS.SSSS))               |
+           +------------------+---------------------------------------------------------------+
+           | datetime_jd      | epoch Julian Date (float)                                     |
+           +------------------+---------------------------------------------------------------+
+           | x                | X-component of position vector (float, km)                    |
+           +------------------+---------------------------------------------------------------+
+           | y                | Y-component of position vector (float, km)                    |
+           +------------------+---------------------------------------------------------------+
+           | z                | Z-component of position vector (float, km)                    |
+           +------------------+---------------------------------------------------------------+
+           | vx               | X-component of velocity vector (float, km/s)                |
+           +------------------+---------------------------------------------------------------+
+           | vy               | Y-component of velocity vector (float, km/s)                |
+           +------------------+---------------------------------------------------------------+
+           | vz               | Z-component of velocity vector (float, km/s)                |
+           +------------------+---------------------------------------------------------------+
+           | lt               | One-way down-leg Newtonian light-time (float, s)            |
+           +------------------+---------------------------------------------------------------+
+           | rg               | Range; distance from coordinate center (float, km)            |
+           +------------------+---------------------------------------------------------------+
+           | rr               | Range-rate; radial velocity wrt coord. center (float, km/s) | 
+           +------------------+---------------------------------------------------------------+
+""" 
+        # encode objectname for use in URL
+        objectname = urllib.quote(self.targetname.encode("utf8"))
+        ### call Horizons website and extract data based on 
+        ### instructions found on https://ssd.jpl.nasa.gov/horizons_batch.cgi
+        ### Variable list can found here: ftp://ssd.jpl.nasa.gov/pub/ssd/horizons_batch_example.long
+        
+        ### construct URL for HORIZONS query 
+        url = "http://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1" \
+              + "&TABLE_TYPE='VECTORS'" \
+              + "&CSV_FORMAT='YES'" \
+              + "&OUT_UNITS='KM-S'"\
+              + "&CENTER='" + str(center) + "'" \
+              + "&REF_PLANE='ECLIPTIC'" \
+              + "&REF_SYSTEM='J2000'" \
+              + "&OBJ_DATA='YES'" \
+              + "&VEC_LABELS='NO'" \
+              + "&VEC_CORR='NONE'" \
+              + "&VEC_TABLE='3'" \
+              + "&CAL_FORMAT='BOTH'" 
+            # + "&TIME_DIGITS='MIN'"
+        
+        # check if self.targetname is a designation
+        if self.not_smallbody:
+            url += "&COMMAND='" + \
+                   urllib.quote(self.targetname.encode("utf8")) + "'"
+        elif self.isorbit_record():
+            # Comet orbit record. Do not use DES, CAP. This test must
+            # occur before asteroid test.
+            url += "&COMMAND='" + \
+                   urllib.quote(self.targetname.encode("utf8")) + "%3B'"
+        elif self.isasteroid() and not self.comet:
+            # for asteroids, use 'DES="designation";'
+            for ident in self.parse_asteroid():
+                if ident is not None:
+                    break
+            if ident is None:
+                ident = self.targetname
+            url += "&COMMAND='" + \
+                   urllib.quote(str(ident).encode("utf8")) + "%3B'"
+        elif self.iscomet() and not self.asteroid:
+            # for comets, potentially append the current apparition
+            # (CAP) parameter, or the fragmentation flag (NOFRAG)
+            for ident in self.parse_comet():
+                if ident is not None:
+                    break
+            if ident is None:
+                ident = self.targetname
+            url += "&COMMAND='DES=" + \
+                   urllib.quote(ident.encode("utf8")) + "%3B" + \
+                   ("NOFRAG%3B" if self.nofrag else "") + \
+                   ("CAP'" if self.cap else "'")
+        # elif (not self.targetname.replace(' ', '').isalpha() and not
+        #      self.targetname.isdigit() and not
+        #      self.targetname.islower() and not
+        #      self.targetname.isupper()):
+        #     url += "&COMMAND='DES=" + str(objectname) + "%3B'"
+        # lower case + upper case + numbers = pot. case sensitive designation
+        else:
+            #url += "&COMMAND='" + str(objectname) + "%3B'"
+            url += "&COMMAND='" + urllib.quote(self.targetname.encode("utf8")) + "%3B'"
+
+
+        if self.discreteepochs is not None:
+            url += "&TLIST="
+            for date in self.discreteepochs:
+                url += "'" + str(date) + "'"
+        elif (self.start_epoch is not None and self.stop_epoch is not None and
+              self.step_size is not None):
+            url +=  "&START_TIME='" \
+                    + urllib.quote(self.start_epoch.encode("utf8")) + "'" \
+                    + "&STOP_TIME='" \
+                    + urllib.quote(self.stop_epoch.encode("utf8")) + "'" \
+                    + "&STEP_SIZE='" + str(self.step_size) + "'"
+        else:
+            raise IOError('no epoch information given')
+
+        self.url = url
+        print(url) 
+
+        ### call HORIZONS
+        i = 0  # count number of connection tries
+        while True:
+            try:
+                src = urllib.urlopen(url).readlines()
+                break
+            except urllib.URLError:
+                time.sleep(0.1)
+                # in case the HORIZONS website is blocked (due to another query)
+                # wait 1 second and try again
+            i += 1
+            if i > 50:
+                return 0 # website could not be reached
+
+        ### disseminate website source code
+        # identify header line and extract data block (elements data)
+        # also extract targetname, abs. magnitude (H), and slope parameter (G)
+        headerline = []
+        datablock = []
+        in_datablock = False
+        H, G = np.nan, np.nan
+        for idx,line in enumerate(src):
+            line = line.decode('UTF-8')
+            
+            if 'JDTDB,' in line:
+                headerline = line.split(',')
+            if "$$EOE\n" in line:
+                in_datablock = False
+            if in_datablock:
+                datablock.append(line)
+            if "$$SOE\n" in line:
+                in_datablock = True
+            if "Target body name" in line:
+                targetname = line[18:50].strip()
+            if "rotational period in hours)" in src[idx].decode('UTF-8'):
+                HGline = src[idx+2].decode('UTF-8').split('=')
+                if 'B-V' in HGline[2] and 'G' in HGline[1]:
+                    try:
+                        H = float(HGline[1].rstrip('G'))
+                    except ValueError:
+                        pass
+                    try:
+                        G = float(HGline[2].rstrip('B-V'))
+                    except ValueError:
+                        pass
+            if ("Multiple major-bodies match string" in src[idx].decode('UTF-8') or
+               ("Matching small-bodies" in src[idx].decode('UTF-8') and not
+                "No matches found" in src[idx+1].decode('UTF-8'))):
+                raise ValueError('Ambiguous target name; check URL: %s' %
+                                 url)
+            if ("Matching small-bodies" in src[idx].decode('UTF-8') and
+                "No matches found" in src[idx+1].decode('UTF-8')):
+                raise ValueError('Unknown target; check URL: %s' % url)
+
+        ### field identification for each line in
+        vectors = []
+        for line in datablock:
+            line = line.split(',')
+            
+            # ignore lines that don't hold any data
+            #if len(line) < len(quantities.split(',')):
+            #    continue
+
+            this_vec   = []
+            fieldnames = [] 
+            datatypes   = []
+            # create a dictionary for each date (each line)
+            for idx,item in enumerate(headerline):
+                if (item.find('Calendar Date (TDB)') > -1):
+                   this_vec.append((line[idx]).strip())
+                   fieldnames.append('datetime')
+                   datatypes.append(object)              
+                if (item.find('JDTDB') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('datetime_jd')
+                    datatypes.append(np.float64)
+                if (item.find('X') > -1) and len(item.strip()) == 1: # need to distinguish between 'X' and 'VX'
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('x')
+                    datatypes.append(np.float64)
+                if (item.find('Y') > -1) and len(item.strip()) == 1:
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('y')
+                    datatypes.append(np.float64)
+                if (item.find('Z') > -1) and len(item.strip()) == 1:
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('z')
+                    datatypes.append(np.float64)
+                if (item.find('VX') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('vx')
+                    datatypes.append(np.float64)
+                if (item.find('VY') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('vy')
+                    datatypes.append(np.float64)
+                if (item.find('VZ') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('vz')
+                    datatypes.append(np.float64)
+                if (item.find('LT') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('lt')
+                    datatypes.append(np.float64)
+                if (item.find('RG') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('rg')
+                    datatypes.append(np.float64)
+                if (item.find('RR') > -1):
+                    this_vec.append(np.float64(line[idx]))
+                    fieldnames.append('rr')
+                    datatypes.append(np.float64)
+ 
+            # append targetname
+            this_vec.append(targetname)
+            fieldnames.append('targetname')
+            datatypes.append(object)
+
+            # append H
+            this_vec.append(H)
+            fieldnames.append('H')
+            datatypes.append(np.float64)
+
+            # append G
+            this_vec.append(G)
+            fieldnames.append('G')
+            datatypes.append(np.float64)
+
+            if len(this_vec) > 0:
+                vectors.append(tuple(this_vec))
+
+        if len(vectors) == 0:
+            return 0
+
+        # combine vectors with column names and data types into ndarray
+        assert len(vectors[0]) == len(fieldnames) == len(datatypes)
+        self.data = np.array(vectors,
+                               dtype=[(str(fieldnames[i]), datatypes[i]) for i
+                                      in range(len(fieldnames))])
+
+        return len(self)
+
 
 
 
